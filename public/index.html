@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Телемедицинское приложение</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Телемедицинское приложение</h1>
+
+    <div class="video-container">
+        <div>
+            <h3>Ваше видео</h3>
+            <video id="localVideo" autoplay muted></video>
+        </div>
+        <div>
+            <h3>Видео пациента/врача</h3>
+            <video id="remoteVideo" autoplay></video>
+        </div>
+    </div>
+
+    <div class="controls">
+        <select id="userSelect"></select>
+        <button id="startCall">Начать вызов</button>
+        <button id="endCall">Завершить вызов</button>
+        <button id="toggleMic">Вкл/Выкл микрофон</button>
+        <button id="toggleCam">Вкл/Выкл камеру</button>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
