@@ -1,34 +1,57 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Телемедицинское приложение</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Телемедицинское приложение</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <header>
     <h1>Телемедицинское приложение</h1>
+    <div id="status">Статус: <span id="conn-status">offline</span></div>
+  </header>
 
-    <div class="video-container">
-        <div>
-            <h3>Ваше видео</h3>
-            <video id="localVideo" autoplay muted></video>
-        </div>
-        <div>
-            <h3>Видео пациента/врача</h3>
-            <video id="remoteVideo" autoplay></video>
-        </div>
-    </div>
-
-    <div class="controls">
-        <select id="userSelect"></select>
+  <main>
+    <section class="panel">
+      <h2>Выберите пользователя для звонка</h2>
+      <select id="userSelect">
+        <option value="">-- Выберите пользователя --</option>
+      </select>
+      <div class="controls">
         <button id="startCall">Начать вызов</button>
         <button id="endCall">Завершить вызов</button>
-        <button id="toggleMic">Вкл/Выкл микрофон</button>
-        <button id="toggleCam">Вкл/Выкл камеру</button>
-    </div>
+        <button id="toggleMic">Выкл/Вкл микрофон</button>
+        <button id="toggleCam">Выкл/Вкл камеру</button>
+      </div>
+    </section>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="app.js"></script>
+    <section class="panel video-panel">
+      <div>
+        <h3>Моё видео</h3>
+        <video id="localVideo" autoplay muted playsinline></video>
+      </div>
+      <div>
+        <h3>Удалённое видео</h3>
+        <video id="remoteVideo" autoplay playsinline></video>
+      </div>
+    </section>
+
+    <section class="panel chat-panel">
+      <h3>Чат</h3>
+      <div id="chat-log" class="chat-log" aria-live="polite"></div>
+      <form id="chat-form">
+        <input id="chat-input" placeholder="Написать сообщение..." autocomplete="off" />
+        <button type="submit">Отправить</button>
+      </form>
+    </section>
+  </main>
+
+  <footer>
+    <small>Тестовая реализация WebRTC + Socket.io — локально или на https (Render).</small>
+  </footer>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
