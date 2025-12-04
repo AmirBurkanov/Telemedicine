@@ -1,54 +1,49 @@
-// ====== SERVER.JS ======
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
+// server.js
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
+
+// Настройки CORS не требуются для простого деплоя на Render/локально
 const io = new Server(server);
 
-// Раздаём папку public
-app.use(express.static("public"));
+// Отдаём статические файлы
+app.use(express.static('public'));
 
-// Подключения WebRTC
-io.on("connection", (socket) => {
-    console.log("User connected:", socket.id);
+// При подключении клиента:
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
 
-    // Подключение к комнате (например "room1")
-    socket.on("join", (room) => {
-        socket.join(room);
-        console.log(`User ${socket.id} joined room ${room}`);
+  // При любом подключении пересылаем список пользователей всем
+  const emitUsers = () => {
+    const ids = Array.from(io.sockets.sockets.keys());
+    io.emit('users', ids);
+  };
 
-        socket.to(room).emit("user-joined", socket.id);
-    });
+  emitUsers();
 
-    // Передача SDP offer/answer
-    socket.on("signal", (data) => {
-        socket.to(data.room).emit("signal", data);
-    });
+  // Унифицированный сигналинг — форвардим только указанному target
+  socket.on('signal', (data) => {
+    // data: { type, sdp?, candidate?, target }
+    if (!data || !data.target) return;
+    // отправляем целевому клиенту, добавляя sender
+    io.to(data.target).emit('signal', { ...data, sender: socket.id });
+  });
 
-    // Передача ICE-кандидатов
-    socket.on("ice-candidate", (data) => {
-        socket.to(data.room).emit("ice-candidate", data);
-    });
+  // Резервный чат: пересылаем целевому
+  socket.on('chat', ({ target, message }) => {
+    if (!target) return;
+    io.to(target).emit('chat', { sender: socket.id, message });
+  });
 
-    // Чат
-    socket.on("chat-message", (data) => {
-        io.to(data.room).emit("chat-message", {
-            user: data.user,
-            text: data.text
-        });
-    });
-
-    socket.on("disconnect", () => {
-        console.log("User disconnected:", socket.id);
-    });
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+    emitUsers();
+  });
 });
 
+// Запуск
 const PORT = process.env.PORT || 3000;
-
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
-
-
+server.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
