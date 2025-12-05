@@ -14,34 +14,34 @@ app.use(express.static('public'));
 
 // При подключении клиента:
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
+  console.log('User connected:', socket.id);
 
-  // При любом подключении пересылаем список пользователей всем
-  const emitUsers = () => {
-    const ids = Array.from(io.sockets.sockets.keys());
-    io.emit('users', ids);
-  };
+  // При любом подключении пересылаем список пользователей всем
+  const emitUsers = () => {
+    const ids = Array.from(io.sockets.sockets.keys());
+    io.emit('users', ids);
+  };
 
-  emitUsers();
+  emitUsers();
 
-  // Унифицированный сигналинг — форвардим только указанному target
-  socket.on('signal', (data) => {
-    // data: { type, sdp?, candidate?, target }
-    if (!data || !data.target) return;
-    // отправляем целевому клиенту, добавляя sender
-    io.to(data.target).emit('signal', { ...data, sender: socket.id });
-  });
+  // Унифицированный сигналинг — форвардим только указанному target
+  socket.on('signal', (data) => {
+    // data: { type, sdp?, candidate?, target }
+    if (!data || !data.target) return;
+    // отправляем целевому клиенту, добавляя sender
+    io.to(data.target).emit('signal', { ...data, sender: socket.id });
+  });
 
-  // Резервный чат: пересылаем целевому
-  socket.on('chat', ({ target, message }) => {
-    if (!target) return;
-    io.to(target).emit('chat', { sender: socket.id, message });
-  });
+  // Резервный чат: пересылаем целевому
+  socket.on('chat', ({ target, message }) => {
+    if (!target) return;
+    io.to(target).emit('chat', { sender: socket.id, message });
+  });
 
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-    emitUsers();
-  });
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+    emitUsers();
+  });
 });
 
 // Запуск
