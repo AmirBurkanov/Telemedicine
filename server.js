@@ -6,21 +6,17 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 
-// CORS разрешение для Render
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
-});
+// Настройки CORS не требуются для простого деплоя на Render/локально
+const io = new Server(server);
 
-// Статика
+// Отдаём статические файлы
 app.use(express.static('public'));
 
-// Пользователи
+// При подключении клиента:
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
+  // При любом подключении пересылаем список пользователей всем
   const emitUsers = () => {
     const ids = Array.from(io.sockets.sockets.keys());
     io.emit('users', ids);
@@ -28,11 +24,15 @@ io.on('connection', (socket) => {
 
   emitUsers();
 
+  // Унифицированный сигналинг — форвардим только указанному target
   socket.on('signal', (data) => {
+    // data: { type, sdp?, candidate?, target }
     if (!data || !data.target) return;
+    // отправляем целевому клиенту, добавляя sender
     io.to(data.target).emit('signal', { ...data, sender: socket.id });
   });
 
+  // Резервный чат: пересылаем целевому
   socket.on('chat', ({ target, message }) => {
     if (!target) return;
     io.to(target).emit('chat', { sender: socket.id, message });
@@ -44,5 +44,6 @@ io.on('connection', (socket) => {
   });
 });
 
+// Запуск
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
