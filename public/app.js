@@ -1,4 +1,3 @@
-// public/app.js
 const socket = io();
 
 // --- UI Elements ---
@@ -25,7 +24,6 @@ let isInitiator = false;
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' }
-    // при необходимости можно добавить TURN сервер для разных сетей
   ]
 };
 
@@ -58,27 +56,52 @@ async function getLocalMedia() {
 // --- PeerConnection ---
 function createPeerConnection(targetId) {
   currentTarget = targetId;
+  
+  if (peerConnection) {
+      console.warn('PeerConnection уже существует, закрываем старое.');
+      peerConnection.close();
+  }
+  
   peerConnection = new RTCPeerConnection(rtcConfig);
 
-  // Добавляем локальные дорожки
+  // Добавляем локальные дорожки, если localStream уже получен
   if (localStream) {
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    localStream.getTracks().forEach(track => {
+      // Использование addTrack вместо getSenders для простоты
+      peerConnection.addTrack(track, localStream);
+    });
+    console.log('Локальные дорожки добавлены в PeerConnection.');
+  } else {
+      // Это не должно произойти, так как getLocalMedia() вызывается до создания PC
+      console.error('localStream не готов при создании PeerConnection!');
   }
 
   // ICE кандидаты
   peerConnection.onicecandidate = (event) => {
     if (event.candidate && currentTarget) {
+      console.log('Отправка ICE кандидата:', event.candidate);
       socket.emit('signal', { type: 'candidate', candidate: event.candidate, target: currentTarget });
     }
   };
 
-  // Получение треков
+  // Получение удаленных треков (ключевое изменение)
   peerConnection.ontrack = (event) => {
-    if (!remoteStream) {
-      remoteStream = new MediaStream();
-      remoteVideo.srcObject = remoteStream;
+    // В большинстве современных браузеров, удаленные треки сгруппированы в event.streams[0]
+    if (event.streams && event.streams[0]) {
+        if (remoteVideo.srcObject !== event.streams[0]) {
+            remoteStream = event.streams[0];
+            remoteVideo.srcObject = remoteStream;
+            console.log('Удаленный поток установлен в remoteVideo через event.streams[0].');
+        }
+    } else {
+        // Резервная логика: добавляем трек к нашему потоку
+        if (!remoteStream) {
+          remoteStream = new MediaStream();
+          remoteVideo.srcObject = remoteStream;
+        }
+        remoteStream.addTrack(event.track);
+        console.log('Удаленный трек добавлен к remoteStream.');
     }
-    remoteStream.addTrack(event.track);
   };
 
   // DataChannel от принимающей стороны
@@ -128,8 +151,10 @@ socket.on('signal', async (data) => {
   const sender = data.sender;
   try {
     if (data.type === 'offer') {
-      await getLocalMedia();
-      createPeerConnection(sender);
+      // Получатель:
+      console.log('Получен OFFER от', sender);
+      await getLocalMedia(); // 1. Получаем локальный поток
+      createPeerConnection(sender); // 2. Создаем PC и добавляем в него локальный поток
       isInitiator = false;
 
       await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
@@ -137,13 +162,17 @@ socket.on('signal', async (data) => {
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
       socket.emit('signal', { type: 'answer', sdp: answer, target: sender });
+      console.log('Отправлен ANSWER');
 
     } else if (data.type === 'answer') {
+      // Инициатор:
+      console.log('Получен ANSWER');
       if (!peerConnection) return;
       await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
 
     } else if (data.type === 'candidate') {
-      if (!peerConnection) return;
+      console.log('Получен ICE кандидат');
+      if (!peerConnection || !peerConnection.remoteDescription) return;
       await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
     }
   } catch (err) {
@@ -162,8 +191,9 @@ startCallBtn.addEventListener('click', async () => {
   if (!target) return alert('Выберите пользователя для звонка');
 
   try {
-    await getLocalMedia();
-    createPeerConnection(target);
+    // Инициатор:
+    await getLocalMedia(); // 1. Получаем локальный поток
+    createPeerConnection(target); // 2. Создаем PC и добавляем в него локальный поток
     isInitiator = true;
 
     // DataChannel
@@ -183,8 +213,10 @@ startCallBtn.addEventListener('click', async () => {
 endCallBtn.addEventListener('click', cleanupCall);
 
 function cleanupCall() {
-  if (peerConnection) peerConnection.close();
-  peerConnection = null;
+  if (peerConnection) {
+      peerConnection.close();
+      peerConnection = null;
+  }
   dataChannel = null;
   remoteStream = null;
   remoteVideo.srcObject = null;
