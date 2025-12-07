@@ -1,217 +1,225 @@
-// ============================================================
-//   ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
-// ============================================================
-let socket = io();
-let peerConnection = null;
+// ==========================================
+// app.js — стабильный WebRTC + Socket.IO
+// ==========================================
 
+const socket = io();
+
+// ---------- UI ----------
+const myIdElem = document.getElementById("myId");
+const userListElem = document.getElementById("users");
+const targetIdInput = document.getElementById("targetId");
+const callBtn = document.getElementById("callBtn");
+const micBtn = document.getElementById("micBtn");
+const camBtn = document.getElementById("camBtn");
+
+const localVideo = document.getElementById("localVideo");
+const remoteVideo = document.getElementById("remoteVideo");
+
+// ---------- RTC ----------
+let pc = null;
 let localStream = null;
 let remoteStream = null;
-
-let currentTargetId = null;
 let candidateBuffer = [];
+let callTarget = null;
 
-const servers = {
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+// ---------- RTC CONFIG ----------
+const rtcConfig = {
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
 
-// ============================================================
-//   1. Получаем камеру + микрофон сразу
-// ============================================================
-async function initLocalMedia() {
-    if (localStream) return localStream;
+// ==========================================
+// Utility: create PC
+// ==========================================
+function createPeerConnection() {
+    pc = new RTCPeerConnection(rtcConfig);
 
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true
-        });
-
-        const localVideo = document.getElementById("localVideo");
-        localVideo.srcObject = localStream;
-        localVideo.muted = true;
-        await localVideo.play();
-
-        console.log("Local media initialized");
-        return localStream;
-
-    } catch (e) {
-        console.error("Media error:", e);
-        alert("Ошибка доступа к камере/микрофону");
-    }
-}
-
-// ============================================================
-//   2. Создание PeerConnection
-// ============================================================
-function createPeerConnection(targetId) {
-    if (peerConnection) {
-        console.warn("PeerConnection already exists");
-        return peerConnection;
-    }
-
-    console.log("Creating PeerConnection with:", targetId);
-    currentTargetId = targetId;
-
-    peerConnection = new RTCPeerConnection(servers);
-
-    // ---- создаём remote stream ----
-    remoteStream = new MediaStream();
-    const remoteVideo = document.getElementById("remoteVideo");
-
-    remoteVideo.srcObject = remoteStream;
-    remoteVideo.autoplay = true;
-    remoteVideo.playsInline = true;
-    remoteVideo.muted = false;
-    remoteVideo.volume = 1;
-
-    remoteVideo.onloadedmetadata = () => {
-        remoteVideo.play().catch(err => console.warn("Autoplay block:", err));
-    };
-
-    // ---- добавляем локальные дорожки ----
+    // локальные дорожки
     if (localStream) {
         localStream.getTracks().forEach(track => {
-            peerConnection.addTrack(track, localStream);
+            pc.addTrack(track, localStream);
         });
     }
 
-    // ---- получаем треки от удалённого ----
-    peerConnection.ontrack = (event) => {
-        console.log("ONTRACK:", event.track.kind);
-
-        const track = event.track;
-        const already = remoteStream.getTracks().some(t => t.id === track.id);
-        if (!already) remoteStream.addTrack(track);
-
-        remoteVideo.play().catch(() => {});
-    };
-
-    // ---- ICE кандидаты ----
-    peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
+    // ICE кандидаты
+    pc.onicecandidate = (event) => {
+        if (event.candidate && callTarget) {
             socket.emit("signal", {
-                target: currentTargetId,
+                target: callTarget,
                 data: { candidate: event.candidate }
             });
         }
     };
 
-    peerConnection.oniceconnectionstatechange = () => {
-        console.log("PC state:", peerConnection.iceConnectionState);
+    // получаем дорожки
+    pc.ontrack = (event) => {
+        if (!remoteStream) {
+            remoteStream = new MediaStream();
+            remoteVideo.srcObject = remoteStream;
+
+            remoteVideo.muted = false;
+            remoteVideo.volume = 1;
+
+            remoteVideo.onloadedmetadata = () => {
+                remoteVideo.play().catch(err =>
+                    console.warn("Remote video autoplay blocked:", err)
+                );
+            };
+        }
+        remoteStream.addTrack(event.track);
     };
 
-    return peerConnection;
+    // состояние PC
+    pc.onconnectionstatechange = () => {
+        console.log("PC state:", pc.connectionState);
+        if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+            endCall();
+        }
+    };
+
+    return pc;
 }
 
-// ============================================================
-//   3. Инициатор начинает звонок
-// ============================================================
-document.getElementById("callBtn").onclick = async () => {
-    const targetInput = document.getElementById("targetId").value.trim();
-    if (!targetInput) {
-        alert("Введите ID собеседника!");
-        return;
+// ==========================================
+// Get camera + mic
+// ==========================================
+async function getLocalMedia() {
+    if (localStream) return localStream;
+
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+        });
+
+        localVideo.srcObject = localStream;
+        return localStream;
+
+    } catch (err) {
+        console.error("getUserMedia error:", err);
+        alert("Ошибка доступа к микрофону/камере: " + err.message);
+        throw err;
     }
+}
 
-    const targetId = targetInput.replace("ID: ", "");
+// ==========================================
+// Socket events
+// ==========================================
+socket.on("connect", () => {
+    myIdElem.textContent = socket.id;
+});
 
-    await initLocalMedia();
+// список пользователей
+socket.on("userList", (list) => {
+    userListElem.innerHTML = "";
+    list.forEach(id => {
+        const li = document.createElement("li");
+        li.textContent = id;
 
-    createPeerConnection(targetId);
+        li.onclick = () => {
+            targetIdInput.value = id;
+        };
 
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
+        userListElem.appendChild(li);
+    });
+});
+
+// сигналы WebRTC
+socket.on("signal", async ({ from, data }) => {
+    try {
+        console.log("Signal:", data);
+
+        if (!pc) {
+            console.log("Creating PC due to incoming signal");
+            createPeerConnection();
+        }
+
+        // ----- OFFER -----
+        if (data.type === "offer") {
+            callTarget = from;
+
+            await getLocalMedia();
+
+            if (!pc) createPeerConnection();
+
+            await pc.setRemoteDescription(new RTCSessionDescription(data));
+
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+
+            socket.emit("signal", {
+                target: from,
+                data: pc.localDescription
+            });
+
+            // применяем отложенные ICE
+            flushBufferedCandidates();
+        }
+
+        // ----- ANSWER -----
+        else if (data.type === "answer") {
+            await pc.setRemoteDescription(new RTCSessionDescription(data));
+
+            flushBufferedCandidates();
+        }
+
+        // ----- ICE Candidate -----
+        else if (data.candidate) {
+            const candidate = new RTCIceCandidate(data.candidate);
+
+            if (pc.remoteDescription) {
+                await pc.addIceCandidate(candidate);
+                console.log("ICE applied");
+            } else {
+                console.log("ICE buffered");
+                candidateBuffer.push(candidate);
+            }
+        }
+
+    } catch (err) {
+        console.error("Signal error:", err);
+    }
+});
+
+// применить отложенные ICE-кандидаты
+async function flushBufferedCandidates() {
+    if (!candidateBuffer.length) return;
+    for (const c of candidateBuffer) {
+        try {
+            await pc.addIceCandidate(c);
+        } catch (err) {
+            console.warn("Error applying buffered ICE:", err);
+        }
+    }
+    console.log("Buffered ICE applied");
+    candidateBuffer = [];
+}
+
+// ==========================================
+// Start call
+// ==========================================
+callBtn.onclick = async () => {
+    const target = targetIdInput.value.trim();
+    if (!target) return alert("Select target ID first");
+
+    callTarget = target;
+
+    await getLocalMedia();
+    createPeerConnection();
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
 
     socket.emit("signal", {
-        target: targetId,
+        target: target,
         data: offer
     });
 
     console.log("Offer sent");
 };
 
-// ============================================================
-//   4. Сигналы от сервера
-// ============================================================
-socket.on("signal", async ({ from, data }) => {
-    console.log("Signal received", data);
-
-    // создаём PC если нет
-    if (!peerConnection) {
-        await initLocalMedia();
-        createPeerConnection(from);
-    }
-
-    // ===== OFFER =====
-    if (data.type === "offer") {
-        console.log("Received OFFER");
-
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
-
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-
-        socket.emit("signal", {
-            target: from,
-            data: answer
-        });
-
-        console.log("ANSWER sent");
-    }
-
-    // ===== ANSWER =====
-    else if (data.type === "answer") {
-        console.log("Received ANSWER");
-
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
-
-        // применяем буфер
-        for (let cand of candidateBuffer) {
-            await peerConnection.addIceCandidate(cand);
-        }
-        candidateBuffer = [];
-    }
-
-    // ===== ICE-кандидат =====
-    else if (data.candidate) {
-        const cand = new RTCIceCandidate(data.candidate);
-
-        if (peerConnection.remoteDescription) {
-            peerConnection.addIceCandidate(cand);
-            console.log("addIceCandidate success");
-        } else {
-            console.log("Buffered candidate");
-            candidateBuffer.push(cand);
-        }
-    }
-});
-
-// ============================================================
-//  5. ВЫКЛЮЧЕНИЕ / ВКЛЮЧЕНИЕ МИКРОФОНА
-// ============================================================
-document.getElementById("micBtn").onclick = () => {
-    const audioTrack = localStream?.getAudioTracks()[0];
-    if (!audioTrack) return;
-
-    audioTrack.enabled = !audioTrack.enabled;
-
-    document.getElementById("micBtn").textContent =
-        audioTrack.enabled ? "Mute Mic" : "Unmute Mic";
-};
-
-// ============================================================
-//  6. ВЫКЛЮЧЕНИЕ / ВКЛЮЧЕНИЕ КАМЕРЫ
-// ============================================================
-document.getElementById("camBtn").onclick = () => {
-    const videoTrack = localStream?.getVideoTracks()[0];
-    if (!videoTrack) return;
-
-    videoTrack.enabled = !videoTrack.enabled;
-
-    document.getElementById("camBtn").textContent =
-        videoTrack.enabled ? "Turn Off Camera" : "Turn On Camera";
-};
-
-// ============================================================
-//  7. КОНЕЦ — все работает 💯
-// ============================================================
+// ==========================================
+// End call
+// ==========================================
+function endCall() {
+    if (pc) {
+        pc.close();
