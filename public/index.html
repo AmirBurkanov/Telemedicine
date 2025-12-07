@@ -1,80 +1,57 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebRTC Video Chat</title>
-
-  <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Телемедицинское приложение</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
-
 <body>
+  <header>
+    <h1>Телемедицинское приложение</h1>
+    <div id="status">Статус: <span id="conn-status">offline</span></div>
+  </header>
 
-<header>
-  <div>WebRTC Чат</div>
-  <div id="conn-status">offline</div>
-</header>
-
-<main>
-
-  <!-- Панель выбора пользователя -->
-  <div class="panel">
-    <h3>Подключение</h3>
-    <p>Выберите пользователя для вызова:</p>
-
-    <select id="userSelect">
-      <option value="">-- Загрузка... --</option>
-    </select>
-
-    <div class="controls">
-      <button id="startCall">Позвонить</button>
-      <button id="endCall">Завершить</button>
-    </div>
-
-    <div class="controls">
-      <button id="toggleMic">Выкл/Вкл микрофон</button>
-      <button id="toggleCam">Выкл/Вкл камеру</button>
-    </div>
-  </div>
-
-  <!-- Видео -->
-  <div class="panel">
-    <h3>Видео</h3>
-
-    <div class="video-panel">
-      <div>
-        <p>Вы</p>
-        <video id="localVideo" autoplay playsinline muted></video>
+  <main>
+    <section class="panel">
+      <h2>Выберите пользователя для звонка</h2>
+      <select id="userSelect">
+        <option value="">-- Выберите пользователя --</option>
+      </select>
+      <div class="controls">
+        <button id="startCall">Начать вызов</button>
+        <button id="endCall">Завершить вызов</button>
+        <button id="toggleMic">Выкл/Вкл микрофон</button>
+        <button id="toggleCam">Выкл/Вкл камеру</button>
       </div>
+    </section>
 
+    <section class="panel video-panel">
       <div>
-        <p>Собеседник</p>
+        <h3>Моё видео</h3>
+        <video id="localVideo" autoplay muted playsinline></video>
+      </div>
+      <div>
+        <h3>Удалённое видео</h3>
         <video id="remoteVideo" autoplay playsinline></video>
       </div>
-    </div>
-  </div>
+    </section>
 
-  <!-- Чат -->
-  <div class="panel chat-panel">
-    <h3>Чат</h3>
+    <section class="panel chat-panel">
+      <h3>Чат</h3>
+      <div id="chat-log" class="chat-log" aria-live="polite"></div>
+      <form id="chat-form">
+        <input id="chat-input" placeholder="Написать сообщение..." autocomplete="off" />
+        <button type="submit">Отправить</button>
+      </form>
+    </section>
+  </main>
 
-    <div id="chat-log" class="chat-log"></div>
+  <footer>
+    <small>Тестовая реализация WebRTC + Socket.io — локально или на https (Render).</small>
+  </footer>
 
-    <form id="chat-form">
-      <input id="chat-input" placeholder="Введите сообщение..." />
-      <button type="submit">Отправить</button>
-    </form>
-  </div>
-
-</main>
-
-<footer>
-  WebRTC Video Chat Demo
-</footer>
-
-<script src="/socket.io/socket.io.js"></script>
-<script src="app.js"></script>
-
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
-
