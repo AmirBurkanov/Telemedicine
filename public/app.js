@@ -1,6 +1,4 @@
-// public/app.js
-// ⚠️ Замените URL на ваш домен Render
-const socket = io('https://telemedicine-1-56qy.onrender.com/'); 
+const socket = io(); // подключается к текущему хосту автоматически
 
 // UI
 const connStatus = document.getElementById('conn-status');
@@ -26,10 +24,8 @@ const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
 // --- Helpers ---
 function logChat(text){
-  const d = document.createElement('div');
-  d.textContent = text;
-  chatLog.appendChild(d);
-  chatLog.scrollTop = chatLog.scrollHeight;
+  const d = document.createElement('div'); d.textContent = text;
+  chatLog.appendChild(d); chatLog.scrollTop = chatLog.scrollHeight;
 }
 
 function setStatus(s){ connStatus.textContent = s; }
@@ -50,119 +46,130 @@ async function getLocalMedia(){
 }
 
 // --- PeerConnection ---
-async function createPeerConnection(targetId){
+function createPeerConnection(targetId){
   currentTarget = targetId;
   peerConnection = new RTCPeerConnection(rtcConfig);
 
-  // Добавляем локальные треки
-  if (!localStream) await getLocalMedia();
-  localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+  // Добавить локальные дорожки (если есть)
+  if (localStream) {
+    for (const t of localStream.getTracks()) peerConnection.addTrack(t, localStream);
+  }
 
-  // ICE кандидаты
+  // собрать ICE кандидаты
   peerConnection.onicecandidate = (e) => {
     if (e.candidate && currentTarget) {
       socket.emit('signal', { type: 'candidate', candidate: e.candidate, target: currentTarget });
-      console.log('ICE candidate sent', e.candidate);
     }
   };
 
-  // Удалённые треки
+  // при получении треков
   peerConnection.ontrack = (e) => {
     if (!remoteStream) {
       remoteStream = new MediaStream();
       remoteVideo.srcObject = remoteStream;
     }
-    remoteStream.addTrack(e.track); // добавляем трек напрямую
+    remoteStream.addTrack(e.track);
   };
 
-
-  // DataChannel
+  // если это не инициатор, может прийти datachannel
   peerConnection.ondatachannel = (evt) => {
     dataChannel = evt.channel;
     setupDataChannel();
   };
 
+  // debug
   peerConnection.onconnectionstatechange = () => {
-  console.log('PC state:', peerConnection.connectionState);
-  if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') {
-    cleanupCall();
-  }
-};
-
+    console.log('PC state:', peerConnection.connectionState);
+    if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') {
+      // cleanup
+    }
+  };
+}
 
 function setupDataChannel(){
   if (!dataChannel) return;
-  dataChannel.onopen = () => logChat('Система: dataChannel открыт');
-  dataChannel.onmessage = (e) => logChat('Собеседник: ' + e.data);
-  dataChannel.onclose = () => logChat('Система: dataChannel закрыт');
+  dataChannel.onopen = () => { logChat('Система: dataChannel открыт'); };
+  dataChannel.onmessage = (e) => { logChat('Собеседник: ' + e.data); };
+  dataChannel.onclose = () => { logChat('Система: dataChannel закрыт'); };
 }
 
-// --- Cleanup ---
-function cleanupCall(){
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection = null;
-  }
-  dataChannel = null;
-  remoteStream = null;
-  remoteVideo.srcObject = null;
-  currentTarget = null;
-  logChat('Система: звонок завершён');
-}
+// --- Signaling handlers ---
+socket.on('connect', () => {
+  setStatus('online');
+  console.log('connected, id=', socket.id);
+});
 
-// --- Signaling ---
-socket.on('connect', () => setStatus('online'));
-socket.on('disconnect', () => setStatus('offline'));
+socket.on('disconnect', () => {
+  setStatus('offline');
+});
 
+// Сервер присылает список пользователей (массив socket.id)
 socket.on('users', (users) => {
+  // очистка, добавление опций
   userSelect.innerHTML = '<option value="">-- Выберите пользователя --</option>';
   users.forEach(id => {
     if (id === socket.id) return;
-    const opt = document.createElement('option');
-    opt.value = id;
-    opt.textContent = id;
+    const opt = document.createElement('option'); opt.value = id; opt.textContent = id;
     userSelect.appendChild(opt);
   });
 });
 
+// Сервер форвардит 'signal' от других клиентов
 socket.on('signal', async (data) => {
+  // data: { type, sdp?, candidate?, sender }
   try {
+    console.log('Signal received', data);
     const sender = data.sender;
     if (data.type === 'offer') {
-      await createPeerConnection(sender);
+      // получить локальный stream, создать PC если нужно
+      await getLocalMedia();
+      createPeerConnection(sender);
       isInitiator = false;
       await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
       socket.emit('signal', { type: 'answer', sdp: answer, target: sender });
     } else if (data.type === 'answer') {
-      if (peerConnection) await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      if (!peerConnection) {
+        console.warn('Нет peerConnection при получении answer');
+        return;
+      }
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
     } else if (data.type === 'candidate') {
-      if (peerConnection) await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+      if (!peerConnection) {
+        console.warn('Нет peerConnection при получении candidate, создаём временный pc?');
+        return;
+      }
+      try {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+      } catch (err) {
+        console.warn('addIceCandidate error', err);
+      }
     }
   } catch (err) {
     console.error('Ошибка обработки signal', err);
   }
 });
 
+// Резервный чат (если dataChannel не доступен)
 socket.on('chat', ({ sender, message }) => {
   logChat('Другой: ' + message);
 });
 
-// --- UI ---
+// --- UI actions ---
 startCallBtn.addEventListener('click', async () => {
   const target = userSelect.value;
   if (!target) return alert('Выберите пользователя для звонка');
   try {
     await getLocalMedia();
-    await createPeerConnection(target);
+    createPeerConnection(target);
     isInitiator = true;
+    // инициатор создаёт dataChannel
     dataChannel = peerConnection.createDataChannel('chat');
     setupDataChannel();
-
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
-    socket.emit('signal', { type: 'offer', sdp: offer, target });
+    socket.emit('signal', { type: 'offer', sdp: offer, target: target });
     logChat('Система: оффер отправлен');
   } catch (err) {
     console.error('startCall error', err);
@@ -170,20 +177,30 @@ startCallBtn.addEventListener('click', async () => {
   }
 });
 
-endCallBtn.addEventListener('click', cleanupCall);
+endCallBtn.addEventListener('click', () => {
+  if (peerConnection) {
+    peerConnection.close();
+    peerConnection = null;
+    dataChannel = null;
+    remoteStream = null;
+    remoteVideo.srcObject = null;
+    logChat('Система: звонок завершён');
+  }
+});
 
 toggleMicBtn.addEventListener('click', () => {
   if (!localStream) return alert('Локальный поток не инициализирован');
-  const track = localStream.getAudioTracks()[0];
-  if (track) { track.enabled = !track.enabled; }
+  const at = localStream.getAudioTracks()[0];
+  if (at) { at.enabled = !at.enabled; toggleMicBtn.textContent = at.enabled ? 'Выкл/Вкл микрофон' : 'Вкл/Выкл микрофон'; }
 });
 
 toggleCamBtn.addEventListener('click', () => {
   if (!localStream) return alert('Локальный поток не инициализирован');
-  const track = localStream.getVideoTracks()[0];
-  if (track) { track.enabled = !track.enabled; }
+  const vt = localStream.getVideoTracks()[0];
+  if (vt) { vt.enabled = !vt.enabled; toggleCamBtn.textContent = vt.enabled ? 'Выкл/Вкл камеру' : 'Вкл/Выкл камеру'; }
 });
 
+// Чат (DataChannel или socket fallback)
 chatForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const text = chatInput.value.trim();
@@ -198,3 +215,14 @@ chatForm.addEventListener('submit', (e) => {
     logChat('Система: нет активного собеседника для отправки сообщения');
   }
 });
+
+// --- Небольшой тест — показать устройства в консоли (полезно для отладки) ---
+async function listDevices(){
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    console.log('Devices:', devices);
+  } catch (err) {
+    console.warn('enumerateDevices error', err);
+  }
+}
+listDevices();
