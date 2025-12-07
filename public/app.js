@@ -21,11 +21,18 @@ let dataChannel = null;
 let remoteStream = null;
 let currentTarget = null;
 let isInitiator = false;
-let callPending = false; // НОВОЕ: ожидаем ли мы ответа на запрос
+let callPending = false; 
 
+// !!! ИСПРАВЛЕНИЕ: ДОБАВЛЕН TURN-СЕРВЕР !!!
 const rtcConfig = {
   iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' }
+    { urls: 'stun:stun.l.google.com:19302' },
+    // Публичный TURN-сервер для повышения надежности (Рекомендуется использовать свой собственный!)
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
   ]
 };
 
@@ -82,7 +89,7 @@ function createPeerConnection(targetId) {
     }
   };
 
-  // Получение удаленных треков (исправленная, надежная логика)
+  // Получение удаленных треков
   peerConnection.ontrack = (event) => {
     if (event.streams && event.streams[0]) {
         if (remoteVideo.srcObject !== event.streams[0]) {
@@ -106,10 +113,12 @@ function createPeerConnection(targetId) {
     setupDataChannel();
   };
 
-  // Соединение закрыто
+  // Соединение закрыто (или не установлено)
   peerConnection.onconnectionstatechange = () => {
-    console.log('PC state:', peerConnection.connectionState);
+    // Выводим в консоль точное состояние, чтобы понять причину сбоя
+    console.log('PC state changed to:', peerConnection.connectionState);
     if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
+      // Это условие выполняется, когда ICE-соединение не может быть установлено
       cleanupCall();
     }
   };
@@ -142,18 +151,14 @@ socket.on('users', (users) => {
   });
 });
 
-// --- НОВЫЕ ОБРАБОТЧИКИ ДЛЯ ЗАПРОСА ВЫЗОВА ---
-
 // 1. Получение входящего запроса (Принимающая сторона)
 socket.on('call-request', ({ sender }) => {
     if (peerConnection || callPending) {
-        // Отклоняем, если уже заняты или ожидаем
         socket.emit('call-response', { target: sender, action: 'reject' });
         logChat(`Система: Пропущен входящий звонок от ${sender}. Пользователь занят.`);
         return;
     }
     
-    // В реальном приложении здесь должен появиться UI для Accept/Reject
     currentTarget = sender;
     callPending = true; 
     logChat(`Система: Входящий звонок от ${sender}. Автоматическое принятие через 3 секунды (для теста)...`);
@@ -170,11 +175,10 @@ socket.on('call-request', ({ sender }) => {
 // 2. Получение ответа на запрос (Инициатор)
 socket.on('call-response', async ({ sender, action }) => {
     
-    // Проверяем, что ответ пришел от того, кому мы звонили
     if (sender !== currentTarget || !callPending) return;
 
     callPending = false;
-    startCallBtn.disabled = false; // Разблокируем кнопку
+    startCallBtn.disabled = false;
     
     if (action === 'accept') {
         logChat('Система: Вызов принят. Запуск WebRTC (отправка OFFER)...');
@@ -210,11 +214,9 @@ socket.on('signal', async (data) => {
   const sender = data.sender;
   try {
     if (data.type === 'offer') {
-      // Это срабатывает только если ранее был получен call-response: accept
       console.log('Получен OFFER от', sender);
       
       await getLocalMedia();
-      // Убедитесь, что PeerConnection создан только один раз, после ACCEPT
       if (!peerConnection || currentTarget !== sender) {
           createPeerConnection(sender); 
       }
@@ -251,10 +253,10 @@ startCallBtn.addEventListener('click', async () => {
   if (!target) return alert('Выберите пользователя для звонка');
   if (callPending || peerConnection) return alert('Уже идет или ожидается другой вызов.');
 
-  // *** ИЗМЕНЕНИЕ: Отправляем запрос, а не сразу OFFER ***
+  // Отправляем запрос
   currentTarget = target; 
   callPending = true;
-  startCallBtn.disabled = true; // Блокируем кнопку
+  startCallBtn.disabled = true;
   logChat(`Система: Отправка запроса на вызов пользователю ${target}...`);
   socket.emit('call-request', { target: target }); 
 });
