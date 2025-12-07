@@ -72,8 +72,9 @@ async function createPeerConnection(targetId){
       remoteStream = new MediaStream();
       remoteVideo.srcObject = remoteStream;
     }
-    e.streams[0]?.getTracks().forEach(track => remoteStream.addTrack(track));
+    remoteStream.addTrack(e.track); // добавляем трек напрямую
   };
+
 
   // DataChannel
   peerConnection.ondatachannel = (evt) => {
@@ -82,12 +83,12 @@ async function createPeerConnection(targetId){
   };
 
   peerConnection.onconnectionstatechange = () => {
-    console.log('PC state:', peerConnection.connectionState);
-    if (['disconnected','failed','closed'].includes(peerConnection.connectionState)) {
-      cleanupCall();
-    }
-  };
-}
+  console.log('PC state:', peerConnection.connectionState);
+  if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') {
+    cleanupCall();
+  }
+};
+
 
 function setupDataChannel(){
   if (!dataChannel) return;
