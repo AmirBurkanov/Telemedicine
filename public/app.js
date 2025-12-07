@@ -1,3 +1,4 @@
+// public/app.js
 const socket = io();
 
 // --- UI Elements ---
@@ -20,6 +21,7 @@ let dataChannel = null;
 let remoteStream = null;
 let currentTarget = null;
 let isInitiator = false;
+let callPending = false; // НОВОЕ: ожидаем ли мы ответа на запрос
 
 const rtcConfig = {
   iceServers: [
@@ -67,13 +69,9 @@ function createPeerConnection(targetId) {
   // Добавляем локальные дорожки, если localStream уже получен
   if (localStream) {
     localStream.getTracks().forEach(track => {
-      // Использование addTrack вместо getSenders для простоты
       peerConnection.addTrack(track, localStream);
     });
     console.log('Локальные дорожки добавлены в PeerConnection.');
-  } else {
-      // Это не должно произойти, так как getLocalMedia() вызывается до создания PC
-      console.error('localStream не готов при создании PeerConnection!');
   }
 
   // ICE кандидаты
@@ -84,23 +82,21 @@ function createPeerConnection(targetId) {
     }
   };
 
-  // Получение удаленных треков (ключевое изменение)
+  // Получение удаленных треков (исправленная, надежная логика)
   peerConnection.ontrack = (event) => {
-    // В большинстве современных браузеров, удаленные треки сгруппированы в event.streams[0]
     if (event.streams && event.streams[0]) {
         if (remoteVideo.srcObject !== event.streams[0]) {
             remoteStream = event.streams[0];
             remoteVideo.srcObject = remoteStream;
-            console.log('Удаленный поток установлен в remoteVideo через event.streams[0].');
+            console.log('Удаленный поток установлен в remoteVideo.');
         }
     } else {
-        // Резервная логика: добавляем трек к нашему потоку
+        // Резервный метод для старых браузеров
         if (!remoteStream) {
           remoteStream = new MediaStream();
           remoteVideo.srcObject = remoteStream;
         }
         remoteStream.addTrack(event.track);
-        console.log('Удаленный трек добавлен к remoteStream.');
     }
   };
 
@@ -146,15 +142,82 @@ socket.on('users', (users) => {
   });
 });
 
-// Обработка сигналов
+// --- НОВЫЕ ОБРАБОТЧИКИ ДЛЯ ЗАПРОСА ВЫЗОВА ---
+
+// 1. Получение входящего запроса (Принимающая сторона)
+socket.on('call-request', ({ sender }) => {
+    if (peerConnection || callPending) {
+        // Отклоняем, если уже заняты или ожидаем
+        socket.emit('call-response', { target: sender, action: 'reject' });
+        logChat(`Система: Пропущен входящий звонок от ${sender}. Пользователь занят.`);
+        return;
+    }
+    
+    // В реальном приложении здесь должен появиться UI для Accept/Reject
+    currentTarget = sender;
+    callPending = true; 
+    logChat(`Система: Входящий звонок от ${sender}. Автоматическое принятие через 3 секунды (для теста)...`);
+    
+    // Эмуляция автоматического принятия для простоты (замените на UI)
+    setTimeout(() => {
+        if (callPending && currentTarget === sender) {
+            logChat('Система: Вызов принят (автоматически).');
+            socket.emit('call-response', { target: sender, action: 'accept' });
+        }
+    }, 3000);
+});
+
+// 2. Получение ответа на запрос (Инициатор)
+socket.on('call-response', async ({ sender, action }) => {
+    
+    // Проверяем, что ответ пришел от того, кому мы звонили
+    if (sender !== currentTarget || !callPending) return;
+
+    callPending = false;
+    startCallBtn.disabled = false; // Разблокируем кнопку
+    
+    if (action === 'accept') {
+        logChat('Система: Вызов принят. Запуск WebRTC (отправка OFFER)...');
+        
+        // *** ЗАПУСК WebRTC-ЛОГИКИ ДЛЯ ИНИЦИАТОРА ***
+        try {
+            await getLocalMedia();
+            createPeerConnection(currentTarget);
+            isInitiator = true;
+
+            // DataChannel
+            dataChannel = peerConnection.createDataChannel('chat');
+            setupDataChannel();
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            socket.emit('signal', { type: 'offer', sdp: offer, target: currentTarget });
+            
+        } catch (err) {
+            console.error('Ошибка инициации WebRTC:', err);
+            cleanupCall();
+        }
+        
+    } else { // action === 'reject'
+        logChat(`Система: Вызов отклонен пользователем ${sender}.`);
+        currentTarget = null;
+    }
+});
+
+
+// Обработка сигналов WebRTC (OFFER/ANSWER/CANDIDATE)
 socket.on('signal', async (data) => {
   const sender = data.sender;
   try {
     if (data.type === 'offer') {
-      // Получатель:
+      // Это срабатывает только если ранее был получен call-response: accept
       console.log('Получен OFFER от', sender);
-      await getLocalMedia(); // 1. Получаем локальный поток
-      createPeerConnection(sender); // 2. Создаем PC и добавляем в него локальный поток
+      
+      await getLocalMedia();
+      // Убедитесь, что PeerConnection создан только один раз, после ACCEPT
+      if (!peerConnection || currentTarget !== sender) {
+          createPeerConnection(sender); 
+      }
       isInitiator = false;
 
       await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
@@ -165,13 +228,10 @@ socket.on('signal', async (data) => {
       console.log('Отправлен ANSWER');
 
     } else if (data.type === 'answer') {
-      // Инициатор:
-      console.log('Получен ANSWER');
       if (!peerConnection) return;
       await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
 
     } else if (data.type === 'candidate') {
-      console.log('Получен ICE кандидат');
       if (!peerConnection || !peerConnection.remoteDescription) return;
       await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
     }
@@ -189,25 +249,14 @@ socket.on('chat', ({ sender, message }) => {
 startCallBtn.addEventListener('click', async () => {
   const target = userSelect.value;
   if (!target) return alert('Выберите пользователя для звонка');
+  if (callPending || peerConnection) return alert('Уже идет или ожидается другой вызов.');
 
-  try {
-    // Инициатор:
-    await getLocalMedia(); // 1. Получаем локальный поток
-    createPeerConnection(target); // 2. Создаем PC и добавляем в него локальный поток
-    isInitiator = true;
-
-    // DataChannel
-    dataChannel = peerConnection.createDataChannel('chat');
-    setupDataChannel();
-
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    socket.emit('signal', { type: 'offer', sdp: offer, target: target });
-    logChat('Система: оффер отправлен');
-  } catch (err) {
-    console.error('startCall error', err);
-    alert('Не удалось начать вызов: ' + (err.message || err));
-  }
+  // *** ИЗМЕНЕНИЕ: Отправляем запрос, а не сразу OFFER ***
+  currentTarget = target; 
+  callPending = true;
+  startCallBtn.disabled = true; // Блокируем кнопку
+  logChat(`Система: Отправка запроса на вызов пользователю ${target}...`);
+  socket.emit('call-request', { target: target }); 
 });
 
 endCallBtn.addEventListener('click', cleanupCall);
@@ -221,6 +270,9 @@ function cleanupCall() {
   remoteStream = null;
   remoteVideo.srcObject = null;
   currentTarget = null;
+  isInitiator = false;
+  callPending = false;
+  startCallBtn.disabled = false;
   logChat('Система: звонок завершён');
 }
 
@@ -261,7 +313,6 @@ chatForm.addEventListener('submit', (e) => {
   }
 });
 
-// --- Отладка устройств ---
 async function listDevices() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
