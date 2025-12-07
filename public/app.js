@@ -1,4 +1,5 @@
-const socket = io(); // подключается к текущему хосту автоматически
+// public/app.js
+const socket = io();
 
 // --- UI Elements ---
 const connStatus = document.getElementById('conn-status');
@@ -20,28 +21,33 @@ let dataChannel = null;
 let remoteStream = null;
 let currentTarget = null;
 let isInitiator = false;
-let pendingCandidates = []; // буфер для кандидатов до создания PC
 
-const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const rtcConfig = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' }
+    // при необходимости можно добавить TURN сервер для разных сетей
+  ]
+};
 
 // --- Helpers ---
 function logChat(text) {
-  const d = document.createElement('div');
-  d.textContent = text;
-  chatLog.appendChild(d);
+  const div = document.createElement('div');
+  div.textContent = text;
+  chatLog.appendChild(div);
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
-function setStatus(s) { connStatus.textContent = s; }
+function setStatus(s) {
+  connStatus.textContent = s;
+}
 
 // --- Media ---
 async function getLocalMedia() {
   if (localStream) return localStream;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    localStream = stream;
-    localVideo.srcObject = stream;
-    return stream;
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localVideo.srcObject = localStream;
+    return localStream;
   } catch (err) {
     console.error('getUserMedia error', err);
     alert('Ошибка доступа к камере/микрофону: ' + (err.message || err));
@@ -56,55 +62,52 @@ function createPeerConnection(targetId) {
 
   // Добавляем локальные дорожки
   if (localStream) {
-    for (const t of localStream.getTracks()) {
-      peerConnection.addTrack(t, localStream);
-    }
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
   }
 
   // ICE кандидаты
-  peerConnection.onicecandidate = (e) => {
-    if (e.candidate && currentTarget) {
-      socket.emit('signal', { type: 'candidate', candidate: e.candidate, target: currentTarget });
+  peerConnection.onicecandidate = (event) => {
+    if (event.candidate && currentTarget) {
+      socket.emit('signal', { type: 'candidate', candidate: event.candidate, target: currentTarget });
     }
   };
 
   // Получение треков
-  peerConnection.ontrack = (e) => {
+  peerConnection.ontrack = (event) => {
     if (!remoteStream) {
       remoteStream = new MediaStream();
       remoteVideo.srcObject = remoteStream;
     }
-    remoteStream.addTrack(e.track);
+    remoteStream.addTrack(event.track);
   };
 
   // DataChannel от принимающей стороны
-  peerConnection.ondatachannel = (evt) => {
-    dataChannel = evt.channel;
+  peerConnection.ondatachannel = (event) => {
+    dataChannel = event.channel;
     setupDataChannel();
   };
 
-  // Состояние соединения
+  // Соединение закрыто
   peerConnection.onconnectionstatechange = () => {
     console.log('PC state:', peerConnection.connectionState);
-    if (peerConnection.connectionState === 'disconnected' ||
-        peerConnection.connectionState === 'failed' ||
-        peerConnection.connectionState === 'closed') {
+    if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
       cleanupCall();
     }
   };
 }
 
+// --- DataChannel ---
 function setupDataChannel() {
   if (!dataChannel) return;
-  dataChannel.onopen = () => logChat('Система: dataChannel открыт');
+  dataChannel.onopen = () => logChat('Система: DataChannel открыт');
   dataChannel.onmessage = (e) => logChat('Собеседник: ' + e.data);
-  dataChannel.onclose = () => logChat('Система: dataChannel закрыт');
+  dataChannel.onclose = () => logChat('Система: DataChannel закрыт');
 }
 
 // --- Signaling ---
 socket.on('connect', () => {
   setStatus('online');
-  console.log('connected, id=', socket.id);
+  console.log('Connected, id=', socket.id);
 });
 
 socket.on('disconnect', () => setStatus('offline'));
@@ -120,22 +123,16 @@ socket.on('users', (users) => {
   });
 });
 
+// Обработка сигналов
 socket.on('signal', async (data) => {
+  const sender = data.sender;
   try {
-    const sender = data.sender;
-
     if (data.type === 'offer') {
       await getLocalMedia();
       createPeerConnection(sender);
       isInitiator = false;
 
       await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-
-      // Применяем все кандидаты, пришедшие раньше
-      for (const c of pendingCandidates) {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(c));
-      }
-      pendingCandidates = [];
 
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
@@ -146,27 +143,24 @@ socket.on('signal', async (data) => {
       await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
 
     } else if (data.type === 'candidate') {
-      if (peerConnection) {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-      } else {
-        // Кандидат пришёл до создания PC
-        pendingCandidates.push(data.candidate);
-      }
+      if (!peerConnection) return;
+      await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
     }
   } catch (err) {
-    console.error('Ошибка обработки signal', err);
+    console.error('Ошибка обработки сигнала', err);
   }
 });
 
-// Резервный чат через socket
+// Резервный чат через Socket.io
 socket.on('chat', ({ sender, message }) => {
   logChat('Другой: ' + message);
 });
 
-// --- UI actions ---
+// --- UI Actions ---
 startCallBtn.addEventListener('click', async () => {
   const target = userSelect.value;
   if (!target) return alert('Выберите пользователя для звонка');
+
   try {
     await getLocalMedia();
     createPeerConnection(target);
@@ -195,7 +189,6 @@ function cleanupCall() {
   remoteStream = null;
   remoteVideo.srcObject = null;
   currentTarget = null;
-  pendingCandidates = [];
   logChat('Система: звонок завершён');
 }
 
