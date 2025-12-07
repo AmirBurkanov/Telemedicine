@@ -1,5 +1,6 @@
 // public/app.js
-const socket = io();
+// ⚠️ Замените URL на ваш домен Render
+const socket = io('https://telemedicine-1-56qy.onrender.com/'); 
 
 // UI
 const connStatus = document.getElementById('conn-status');
@@ -67,12 +68,11 @@ async function createPeerConnection(targetId){
 
   // Удалённые треки
   peerConnection.ontrack = (e) => {
-    console.log('ontrack received', e.streams);
     if (!remoteStream) {
       remoteStream = new MediaStream();
       remoteVideo.srcObject = remoteStream;
     }
-    remoteStream.addTrack(e.track);
+    e.streams[0]?.getTracks().forEach(track => remoteStream.addTrack(track));
   };
 
   // DataChannel
@@ -83,7 +83,7 @@ async function createPeerConnection(targetId){
 
   peerConnection.onconnectionstatechange = () => {
     console.log('PC state:', peerConnection.connectionState);
-    if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') {
+    if (['disconnected','failed','closed'].includes(peerConnection.connectionState)) {
       cleanupCall();
     }
   };
@@ -197,14 +197,3 @@ chatForm.addEventListener('submit', (e) => {
     logChat('Система: нет активного собеседника для отправки сообщения');
   }
 });
-
-// --- Debug devices ---
-async function listDevices(){
-  try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    console.log('Devices:', devices);
-  } catch (err) {
-    console.warn('enumerateDevices error', err);
-  }
-}
-listDevices();
