@@ -23,16 +23,24 @@ let currentTarget = null;
 let isInitiator = false;
 let callPending = false; 
 
-// !!! ИСПРАВЛЕНИЕ: ДОБАВЛЕН TURN-СЕРВЕР !!!
+// !!! МАКСИМАЛЬНЫЙ СПИСОК БЕСПЛАТНЫХ STUN-СЕРВЕРОВ !!!
 const rtcConfig = {
   iceServers: [
+    // Google (наиболее надежные)
     { urls: 'stun:stun.l.google.com:19302' },
-    // Публичный TURN-сервер для повышения надежности (Рекомендуется использовать свой собственный!)
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    
+    // Mozilla
+    { urls: 'stun:stun.services.mozilla.com' },
+    
+    // Другие общедоступные
+    { urls: 'stun:stun.stunprotocol.org' },
+    { urls: 'stun:stunserver.org' },
+    { urls: 'stun:stun.voip.blackberry.com:3478' }
+    // ВНИМАНИЕ: Для 100% надежности необходим платный TURN-сервер!
   ]
 };
 
@@ -73,7 +81,7 @@ function createPeerConnection(targetId) {
   
   peerConnection = new RTCPeerConnection(rtcConfig);
 
-  // Добавляем локальные дорожки, если localStream уже получен
+  // Добавляем локальные дорожки
   if (localStream) {
     localStream.getTracks().forEach(track => {
       peerConnection.addTrack(track, localStream);
@@ -89,7 +97,7 @@ function createPeerConnection(targetId) {
     }
   };
 
-  // Получение удаленных треков
+  // Получение удаленных треков (исправлено)
   peerConnection.ontrack = (event) => {
     if (event.streams && event.streams[0]) {
         if (remoteVideo.srcObject !== event.streams[0]) {
@@ -98,7 +106,6 @@ function createPeerConnection(targetId) {
             console.log('Удаленный поток установлен в remoteVideo.');
         }
     } else {
-        // Резервный метод для старых браузеров
         if (!remoteStream) {
           remoteStream = new MediaStream();
           remoteVideo.srcObject = remoteStream;
@@ -115,10 +122,8 @@ function createPeerConnection(targetId) {
 
   // Соединение закрыто (или не установлено)
   peerConnection.onconnectionstatechange = () => {
-    // Выводим в консоль точное состояние, чтобы понять причину сбоя
     console.log('PC state changed to:', peerConnection.connectionState);
     if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
-      // Это условие выполняется, когда ICE-соединение не может быть установлено
       cleanupCall();
     }
   };
@@ -183,13 +188,11 @@ socket.on('call-response', async ({ sender, action }) => {
     if (action === 'accept') {
         logChat('Система: Вызов принят. Запуск WebRTC (отправка OFFER)...');
         
-        // *** ЗАПУСК WebRTC-ЛОГИКИ ДЛЯ ИНИЦИАТОРА ***
         try {
             await getLocalMedia();
             createPeerConnection(currentTarget);
             isInitiator = true;
 
-            // DataChannel
             dataChannel = peerConnection.createDataChannel('chat');
             setupDataChannel();
 
@@ -253,7 +256,6 @@ startCallBtn.addEventListener('click', async () => {
   if (!target) return alert('Выберите пользователя для звонка');
   if (callPending || peerConnection) return alert('Уже идет или ожидается другой вызов.');
 
-  // Отправляем запрос
   currentTarget = target; 
   callPending = true;
   startCallBtn.disabled = true;
